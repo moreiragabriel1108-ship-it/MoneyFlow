@@ -30,12 +30,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val Bg = Color(0xFF090D0B)
-private val Panel = Color(0xFF141C17)
-private val Green = Color(0xFF35D07F)
-private val Muted = Color(0xFF91A198)
-private val White = Color(0xFFF2F7F3)
-private val Red = Color(0xFFFF6B6B)
+private val Bg = Color(0xFFF4F7F3)
+private val Panel = Color(0xFFFFFFFF)
+private val Green = Color(0xFF638B73)
+private val Muted = Color(0xFF78877D)
+private val White = Color(0xFF26352C)
+private val Red = Color(0xFFC87979)
 private val categories = listOf("Alimentação", "Moradia", "Transporte", "Saúde", "Lazer", "Compras", "Educação", "Contas", "Salário", "Outros")
 
 data class Entry(val id: Long, val title: String, val amount: Double, val category: String, val income: Boolean, val date: Long, val note: String)
@@ -64,6 +64,8 @@ fun GranaFlowApp() {
         }
     }
     var budgets by remember { mutableStateOf(prefs.getString("budgets", "") ?: "") }
+    var monthlyLimit by remember { mutableStateOf(prefs.getString("monthlyLimit", "") ?: "") }
+    var showMonthlyLimit by remember { mutableStateOf(false) }
     var goalName by remember { mutableStateOf(prefs.getString("goalName", "Reserva de emergência") ?: "Reserva de emergência") }
     var goalTarget by remember { mutableStateOf(prefs.getString("goalTarget", "1000") ?: "1000") }
     var goalSaved by remember { mutableStateOf(prefs.getString("goalSaved", "0") ?: "0") }
@@ -81,7 +83,7 @@ fun GranaFlowApp() {
             arr.put(JSONObject().put("id", e.id).put("title", e.title).put("amount", e.amount).put("category", e.category).put("income", e.income).put("date", e.date).put("note", e.note))
         }
         prefs.edit().putString("entries", arr.toString()).putString("budgets", budgets)
-            .putString("goalName", goalName).putString("goalTarget", goalTarget).putString("goalSaved", goalSaved).apply()
+            .putString("monthlyLimit", monthlyLimit).putString("goalName", goalName).putString("goalTarget", goalTarget).putString("goalSaved", goalSaved).apply()
     }
 
     val now = System.currentTimeMillis()
@@ -91,7 +93,7 @@ fun GranaFlowApp() {
     val balance = entries.sumOf { if (it.income) it.amount else -it.amount }
     val money = { v: Double -> NumberFormat.getCurrencyInstance(Locale("pt", "BR")).format(v) }
 
-    MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Bg, surface = Panel, onBackground = White, onSurface = White)) {
+    MaterialTheme(colorScheme = lightColorScheme(primary = Green, background = Bg, surface = Panel, onBackground = White, onSurface = White, error = Red)) {
         Scaffold(containerColor = Bg, bottomBar = {
             NavigationBar(containerColor = Panel, contentColor = Muted) {
                 listOf("Início", "Lançamentos", "Orçamentos", "Metas").forEachIndexed { i, label ->
@@ -104,7 +106,7 @@ fun GranaFlowApp() {
             if (tab == 0 || tab == 1) FloatingActionButton(onClick = { editing = null; showAdd = true }, containerColor = Green, contentColor = Bg) { Icon(Icons.Default.Add, "Adicionar lançamento") }
         }) { padding ->
             when (tab) {
-                0 -> Dashboard(Modifier.padding(padding), balance, income, expenses, money, monthEntries, onAdd = { showAdd = true }, onSeeAll = { tab = 1 }, onBudget = { tab = 2 })
+                0 -> Dashboard(Modifier.padding(padding), balance, income, expenses, monthlyLimit.toDoubleOrNull() ?: 0.0, money, monthEntries, onAdd = { showAdd = true }, onSeeAll = { tab = 1 }, onBudget = { tab = 2 }, onMonthlyLimit = { showMonthlyLimit = true })
                 1 -> Transactions(Modifier.padding(padding), entries, filter, { filter = it }, search, { search = it }, money, onEdit = { editing = it; showAdd = true }, onDelete = { entries.remove(it); persist() })
                 2 -> Budgets(Modifier.padding(padding), entries, budgets, money, onConfigure = { showBudget = true })
                 else -> Goals(Modifier.padding(padding), goalName, goalTarget, goalSaved, onConfigure = { showGoal = true })
@@ -112,6 +114,7 @@ fun GranaFlowApp() {
         }
     }
 
+    if (showMonthlyLimit) MonthlyLimitDialog(monthlyLimit, onDismiss = { showMonthlyLimit = false }, onSave = { monthlyLimit = it; persist(); showMonthlyLimit = false })
     if (showAdd) EntryDialog(editing, onDismiss = { showAdd = false; editing = null }, onSave = { e ->
         if (editing != null) { val index = entries.indexOfFirst { it.id == editing!!.id }; if (index >= 0) entries[index] = e }
         else entries.add(0, e)
@@ -124,7 +127,7 @@ fun GranaFlowApp() {
 }
 
 @Composable
-private fun Dashboard(modifier: Modifier, balance: Double, income: Double, expenses: Double, money: (Double) -> String, recent: List<Entry>, onAdd: () -> Unit, onSeeAll: () -> Unit, onBudget: () -> Unit) {
+private fun Dashboard(modifier: Modifier, balance: Double, income: Double, expenses: Double, monthlyLimit: Double, money: (Double) -> String, recent: List<Entry>, onAdd: () -> Unit, onSeeAll: () -> Unit, onBudget: () -> Unit, onMonthlyLimit: () -> Unit) {
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -140,6 +143,22 @@ private fun Dashboard(modifier: Modifier, balance: Double, income: Double, expen
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         SummaryMini("Receitas do mês", money(income), Green, Modifier.weight(1f), Icons.Default.TrendingUp)
                         SummaryMini("Despesas do mês", money(expenses), Red, Modifier.weight(1f), Icons.Default.TrendingDown)
+                    }
+                }
+            }
+        }
+        item {
+            val remaining = monthlyLimit - expenses
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F0E9)), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("DINHEIRO DO MÊS", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        TextButton(onClick = onMonthlyLimit) { Text(if (monthlyLimit > 0) "Editar valor" else "Definir valor", color = Green) }
+                    }
+                    Text(if (monthlyLimit > 0) money(monthlyLimit) else "Toque em definir valor", color = White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    if (monthlyLimit > 0) {
+                        Text("Gasto: ${money(expenses)}  •  ${if (remaining >= 0) "Restam ${money(remaining)}" else "Passou ${money(-remaining)}"}", color = if (remaining >= 0) Green else Red, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                        LinearProgressIndicator(progress = { (expenses / monthlyLimit).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), color = if (remaining >= 0) Green else Red, trackColor = Color(0xFFD5E1D7))
                     }
                 }
             }
@@ -325,4 +344,15 @@ private fun GoalDialog(name0: String, target0: String, saved0: String, onDismiss
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Muted, focusedLabelColor = Green, cursorColor = Green, focusedTextColor = White, unfocusedTextColor = White, focusedContainerColor = Bg, unfocusedContainerColor = Bg, focusedLeadingIconColor = Green, unfocusedLeadingIconColor = Muted)
+private fun fieldColors() = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Color(0xFFB8C5BA), focusedLabelColor = Green, cursorColor = Green, focusedTextColor = White, unfocusedTextColor = White, focusedContainerColor = Panel, unfocusedContainerColor = Panel, focusedLeadingIconColor = Green, unfocusedLeadingIconColor = Muted)
+
+@Composable
+private fun MonthlyLimitDialog(current: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var value by remember { mutableStateOf(current) }
+    AlertDialog(onDismissRequest = onDismiss, containerColor = Panel, title = { Text("Dinheiro disponível no mês", color = White) }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Informe quanto você tem para usar neste mês. O GranaFlow vai descontar suas despesas registradas e mostrar quanto ainda resta.", color = Muted, fontSize = 13.sp)
+            OutlinedTextField(value, { value = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.replace(",", ".") }, label = { Text("Valor total (R$)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, colors = fieldColors())
+        }
+    }, confirmButton = { TextButton(onClick = { if ((value.toDoubleOrNull() ?: -1.0) >= 0) onSave(value) }) { Text("Salvar", color = Green) } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar", color = Muted) } })
+}
