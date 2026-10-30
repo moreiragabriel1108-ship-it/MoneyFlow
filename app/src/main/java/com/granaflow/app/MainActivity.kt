@@ -267,6 +267,7 @@ private fun Goals(modifier: Modifier, name: String, targetText: String, savedTex
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EntryDialog(existing: Entry?, onDismiss: () -> Unit, onSave: (Entry) -> Unit) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
