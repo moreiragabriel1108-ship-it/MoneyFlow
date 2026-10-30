@@ -87,7 +87,7 @@ fun App() {
       Text("GRANAFLOW",color=GREEN,fontWeight=FontWeight.Bold,fontSize=12.sp,letterSpacing=2.sp)
       Text(listOf("Seu resumo financeiro","Todas as movimentações","Planeje seus limites","Seus objetivos","Visão dos seus gastos")[page],color=TEXT,fontSize=20.sp,fontWeight=FontWeight.Bold)
      }
-     Icon(Icons.Filled.AccountBalance,color=GREEN,contentDescription="GranaFlow")
+     Icon(Icons.Filled.AccountBalance,contentDescription="GranaFlow",tint=GREEN)
     }
     when(page) {
      0 -> Dashboard(balance,income,expense,entries,money){selected=it;dialog=true}
