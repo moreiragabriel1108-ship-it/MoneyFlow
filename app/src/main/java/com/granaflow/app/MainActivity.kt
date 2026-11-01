@@ -30,15 +30,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val Bg = Color(0xFFF4F7F3)
-private val Panel = Color(0xFFFFFFFF)
-private val Green = Color(0xFF638B73)
-private val Muted = Color(0xFF78877D)
-private val White = Color(0xFF26352C)
-private val Red = Color(0xFFC87979)
+private val Bg = Color(0xFFF1F5F2)
+private val Panel = Color(0xFFFAFCFA)
+private val Green = Color(0xFF789C85)
+private val Muted = Color(0xFF849188)
+private val White = Color(0xFF293A30)
+private val Red = Color(0xFFC98787)
 private val categories = listOf("Alimentação", "Moradia", "Transporte", "Saúde", "Lazer", "Compras", "Educação", "Contas", "Salário", "Outros")
 
 data class Entry(val id: Long, val title: String, val amount: Double, val category: String, val income: Boolean, val date: Long, val note: String)
+data class DailyPlan(val id: Long, val title: String, val amount: Double, val category: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,6 +66,18 @@ fun GranaFlowApp() {
     }
     var budgets by remember { mutableStateOf(prefs.getString("budgets", "") ?: "") }
     var monthlyLimit by remember { mutableStateOf(prefs.getString("monthlyLimit", "") ?: "") }
+    val dailyPlans = remember {
+        mutableStateListOf<DailyPlan>().apply {
+            try {
+                val arr = JSONArray(prefs.getString("dailyPlans", "[]") ?: "[]")
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    add(DailyPlan(o.optLong("id"), o.optString("title"), o.optDouble("amount"), o.optString("category", "Alimentação")))
+                }
+            } catch (_: Exception) { }
+        }
+    }
+    var showDailyPlan by remember { mutableStateOf(false) }
     var showMonthlyLimit by remember { mutableStateOf(false) }
     var goalName by remember { mutableStateOf(prefs.getString("goalName", "Reserva de emergência") ?: "Reserva de emergência") }
     var goalTarget by remember { mutableStateOf(prefs.getString("goalTarget", "1000") ?: "1000") }
@@ -83,7 +96,9 @@ fun GranaFlowApp() {
             arr.put(JSONObject().put("id", e.id).put("title", e.title).put("amount", e.amount).put("category", e.category).put("income", e.income).put("date", e.date).put("note", e.note))
         }
         prefs.edit().putString("entries", arr.toString()).putString("budgets", budgets)
-            .putString("monthlyLimit", monthlyLimit).putString("goalName", goalName).putString("goalTarget", goalTarget).putString("goalSaved", goalSaved).apply()
+            .putString("monthlyLimit", monthlyLimit)
+            .putString("dailyPlans", JSONArray().apply { dailyPlans.forEach { p -> put(JSONObject().put("id",p.id).put("title",p.title).put("amount",p.amount).put("category",p.category)) } }.toString())
+            .putString("goalName", goalName).putString("goalTarget", goalTarget).putString("goalSaved", goalSaved).apply()
     }
 
     val now = System.currentTimeMillis()
@@ -106,7 +121,17 @@ fun GranaFlowApp() {
             if (tab == 0 || tab == 1) FloatingActionButton(onClick = { editing = null; showAdd = true }, containerColor = Green, contentColor = Bg) { Icon(Icons.Default.Add, "Adicionar lançamento") }
         }) { padding ->
             when (tab) {
-                0 -> Dashboard(Modifier.padding(padding), balance, income, expenses, monthlyLimit.toDoubleOrNull() ?: 0.0, money, monthEntries, onAdd = { showAdd = true }, onSeeAll = { tab = 1 }, onBudget = { tab = 2 }, onMonthlyLimit = { showMonthlyLimit = true })
+                0 -> Dashboard(Modifier.padding(padding), balance, income, expenses, monthlyLimit.toDoubleOrNull() ?: 0.0, money, monthEntries, onAdd = { showAdd = true }, onSeeAll = { tab = 1 }, onBudget = { tab = 2 }, onMonthlyLimit = { showMonthlyLimit = true }, dailyPlans = dailyPlans,
+                    onCreateDailyPlan = { showDailyPlan = true },
+                    onRegisterDaily = { plan ->
+                        val marker = "daily-plan:${plan.id}"
+                        val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+                        val already = entries.any { !it.income && it.note.contains(marker) && SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(it.date)) == today }
+                        if (!already) {
+                            entries.add(0, Entry(System.currentTimeMillis(), plan.title, plan.amount, plan.category, false, System.currentTimeMillis(), marker))
+                            persist()
+                        }
+                    })
                 1 -> Transactions(Modifier.padding(padding), entries, filter, { filter = it }, search, { search = it }, money, onEdit = { editing = it; showAdd = true }, onDelete = { entries.remove(it); persist() })
                 2 -> Budgets(Modifier.padding(padding), entries, budgets, money, onConfigure = { showBudget = true })
                 else -> Goals(Modifier.padding(padding), goalName, goalTarget, goalSaved, onConfigure = { showGoal = true })
@@ -114,6 +139,9 @@ fun GranaFlowApp() {
         }
     }
 
+    if (showDailyPlan) DailyPlanDialog(onDismiss = { showDailyPlan = false }, onSave = { name, amount, category ->
+        dailyPlans.add(DailyPlan(System.currentTimeMillis(), name, amount, category)); persist(); showDailyPlan = false
+    })
     if (showMonthlyLimit) MonthlyLimitDialog(monthlyLimit, onDismiss = { showMonthlyLimit = false }, onSave = { monthlyLimit = it; persist(); showMonthlyLimit = false })
     if (showAdd) EntryDialog(editing, onDismiss = { showAdd = false; editing = null }, onSave = { e ->
         if (editing != null) { val index = entries.indexOfFirst { it.id == editing!!.id }; if (index >= 0) entries[index] = e }
@@ -127,7 +155,7 @@ fun GranaFlowApp() {
 }
 
 @Composable
-private fun Dashboard(modifier: Modifier, balance: Double, income: Double, expenses: Double, monthlyLimit: Double, money: (Double) -> String, recent: List<Entry>, onAdd: () -> Unit, onSeeAll: () -> Unit, onBudget: () -> Unit, onMonthlyLimit: () -> Unit) {
+private fun Dashboard(modifier: Modifier, balance: Double, income: Double, expenses: Double, monthlyLimit: Double, money: (Double) -> String, recent: List<Entry>, onAdd: () -> Unit, onSeeAll: () -> Unit, onBudget: () -> Unit, onMonthlyLimit: () -> Unit, dailyPlans: List<DailyPlan>, onCreateDailyPlan: () -> Unit, onRegisterDaily: (DailyPlan) -> Unit) {
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(top = 24.dp, bottom = 24.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -160,6 +188,34 @@ private fun Dashboard(modifier: Modifier, balance: Double, income: Double, expen
                         Text("Gasto: ${money(expenses)}  •  ${if (remaining >= 0) "Restam ${money(remaining)}" else "Passou ${money(-remaining)}"}", color = if (remaining >= 0) Green else Red, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
                         LinearProgressIndicator(progress = { (expenses / monthlyLimit).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), color = if (remaining >= 0) Green else Red, trackColor = Color(0xFFD5E1D7))
                     }
+                }
+            }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Gastos do dia", color = White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Só desconta quando você confirmar a compra", color = Muted, fontSize = 11.sp)
+                }
+                TextButton(onClick = onCreateDailyPlan) { Text("+ Criar gasto", color = Green) }
+            }
+        }
+        if (dailyPlans.isEmpty()) item { EmptyState("Nenhum gasto diário", "Crie itens como pão, passagem ou almoço e registre apenas nos dias em que gastar.") }
+        items(dailyPlans, key = { "plan-${it.id}" }) { plan ->
+            val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+            val marker = "daily-plan:${plan.id}"
+            val done = recent.any { !it.income && it.note.contains(marker) && SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(it.date)) == today }
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF1EB)), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(42.dp).background(Green.copy(alpha=.13f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.ShoppingBasket, null, tint = Green)
+                    }
+                    Column(Modifier.weight(1f).padding(start=12.dp)) {
+                        Text(plan.title, color=White, fontWeight=FontWeight.Bold)
+                        Text("${money(plan.amount)} por dia • ${plan.category}", color=Muted, fontSize=11.sp)
+                    }
+                    if (done) Text("Registrado ✓", color=Green, fontSize=11.sp, fontWeight=FontWeight.Bold)
+                    else Button(onClick = { onRegisterDaily(plan) }, colors=ButtonDefaults.buttonColors(containerColor=Green), contentPadding=PaddingValues(horizontal=12.dp, vertical=8.dp)) { Text("Gastei", color=Color.White, fontSize=12.sp) }
                 }
             }
         }
@@ -345,6 +401,33 @@ private fun GoalDialog(name0: String, target0: String, saved0: String, onDismiss
 
 @Composable
 private fun fieldColors() = OutlinedTextFieldDefaults.colors(focusedBorderColor = Green, unfocusedBorderColor = Color(0xFFB8C5BA), focusedLabelColor = Green, cursorColor = Green, focusedTextColor = White, unfocusedTextColor = White, focusedContainerColor = Panel, unfocusedContainerColor = Panel, focusedLeadingIconColor = Green, unfocusedLeadingIconColor = Muted)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DailyPlanDialog(onDismiss: () -> Unit, onSave: (String, Double, String) -> Unit) {
+    var title by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("Alimentação") }
+    var expanded by remember { mutableStateOf(false) }
+    AlertDialog(onDismissRequest = onDismiss, containerColor = Panel,
+        title = { Text("Criar gasto diário", color = White) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("Ex.: pão custa R$ 3. O valor só será descontado quando você tocar em Gastei. Se não comprar, não precisa registrar nada.", color = Muted, fontSize = 13.sp)
+                OutlinedTextField(title, { title = it }, label = { Text("O que você costuma comprar?") }, singleLine = true, colors = fieldColors())
+                OutlinedTextField(amount, { amount = it.replace(",", ".") }, label = { Text("Valor por dia (R$)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, colors = fieldColors())
+                ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+                    OutlinedTextField(category, {}, readOnly = true, label = { Text("Categoria") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor().fillMaxWidth(), colors = fieldColors())
+                    ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        categories.filter { it != "Salário" }.forEach { c -> DropdownMenuItem(text = { Text(c) }, onClick = { category = c; expanded = false }) }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { val v = amount.toDoubleOrNull(); if (title.isNotBlank() && v != null && v > 0) onSave(title.trim(), v, category) }) { Text("Criar", color = Green) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar", color = Muted) } }
+    )
+}
 
 @Composable
 private fun MonthlyLimitDialog(current: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
